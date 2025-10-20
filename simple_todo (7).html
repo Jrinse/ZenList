@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Today — Grid Tasks</title>
+  <style>
+    :root{
+      --bg:#fbfcfd; --card:#ffffff; --accent:#0f172a; --muted:#64748b; --ok:#16a34a; --danger:#ef4444;
+      --gap:18px; --cols:4;
+    }
+    *{box-sizing:border-box}
+    body{margin:0; font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial; background:var(--bg); color:var(--accent); padding:28px}
+    h1{margin:0 0 6px; font-size:20px}
+    .wrap{max-width:1100px; margin:0 auto}
+    .header{display:flex; align-items:center; justify-content:space-between; margin-bottom:16px}
+    .subtitle{color:var(--muted); font-size:13px}
+
+    /* Grid */
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(var(--cols), 1fr);
+      gap:var(--gap);
+      align-items:start;
+    }
+    @media (max-width:1024px){:root{--cols:3}}
+    @media (max-width:700px){:root{--cols:2}}
+    @media (max-width:420px){:root{--cols:1}}
+
+    /* Card */
+    .card{
+      min-height:120px;
+      background:var(--card);
+      border-radius:10px;
+      padding:14px;
+      border:1px solid rgba(2,6,23,0.06);
+      box-shadow: 0 6px 18px rgba(2,6,23,0.04);
+      display:flex; flex-direction:column; gap:8px; position:relative; overflow:visible;
+      transform-origin:center;
+      transition:box-shadow .18s ease, transform .18s ease;
+    }
+    .card.dragging{opacity:0.85; transform:scale(.995); box-shadow:0 18px 40px rgba(2,6,23,0.12)}
+
+    .card .title{font-weight:600; font-size:15px}
+    .card .subtasks{flex:1; display:flex; flex-direction:column; gap:6px; margin-top:4px}
+    .subtask{display:flex; align-items:center; gap:8px; font-size:14px}
+    .subtask input[type='checkbox']{accent-color:var(--ok); width:16px; height:16px}
+    .subtask .text{flex:1; outline:none}
+    .subtask .text[contenteditable]{padding:2px 4px; border-radius:6px}
+
+    .subtask .remove{background:transparent;border:0;color:var(--muted); cursor:pointer}
+
+    .card .controls{display:flex; gap:8px; justify-content:flex-end}
+    .btn{background:transparent;border:0;padding:6px 8px;border-radius:8px;cursor:pointer;color:var(--muted); font-size:13px}
+    .btn:hover{background:#f1f5f9}
+
+    /* add box */
+    .add-box{display:flex;align-items:center;justify-content:center;border:2px dashed rgba(2,6,23,0.06); color:var(--muted); font-size:28px; height:150px}
+    .add-box:hover{border-color:rgba(2,6,23,0.12); color:var(--accent)}
+
+    /* small helpers */
+    .small{font-size:13px;color:var(--muted)}
+
+    /* footer progress centered */
+    .footer{position:fixed; left:50%; transform:translateX(-50%); bottom:22px; width:min(720px,94%);}
+    .progress-wrap{background:#eef2f7;border-radius:999px;padding:6px 8px; box-shadow:0 8px 20px rgba(2,6,23,0.05)}
+    .progress-inner{height:12px;background:#e6eefb;border-radius:999px; overflow:hidden}
+    .progress-bar{height:100%; width:0%; background:linear-gradient(90deg,var(--accent), #475569); transition:width .4s ease}
+    .progress-meta{display:flex;justify-content:center;margin-top:8px;font-size:13px;color:var(--muted)}
+
+    /* animations (FLIP helpers) */
+    .flip-fade{transition: transform .32s cubic-bezier(.2,.8,.2,1), opacity .24s ease}
+    .ghost{opacity:.3}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div>
+        <h1>Today</h1>
+        <div class="subtitle">Drag boxes to reorder. Click to open and edit subtasks.</div>
+      </div>
+      <div class="small">Boxes auto-save in your browser</div>
+    </div>
+
+    <div id="grid" class="grid"></div>
+  </div>
+
+  <div class="footer">
+    <div class="progress-wrap">
+      <div class="progress-inner"><div id="progressBar" class="progress-bar"></div></div>
+      <div id="progressMeta" class="progress-meta">0 / 0 subtasks completed</div>
+    </div>
+  </div>
+
+  <script>
+    // Minimalistic grid task board with 2D drag reorder, editable subtasks, add box, animations
+    const STORAGE_KEY = 'todayGridTasks_v1';
+    const grid = document.getElementById('grid');
+    const progressBar = document.getElementById('progressBar');
+    const progressMeta = document.getElementById('progressMeta');
+
+    let tasks = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+
+    // Helper: save and render
+    function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks)); render(); }
+
+    // Create DOM card for a task
+    function createCard(task, idx){
+      const card = document.createElement('div');
+      card.className = 'card flip-fade';
+      card.dataset.index = idx;
+      card.setAttribute('draggable', true);
+
+      const title = document.createElement('div'); title.className='title'; title.textContent = task.title || 'Untitled';
+      title.contentEditable = true;
+
+      // commit edits on blur or Enter (prevents re-render on every keystroke)
+      title.addEventListener('blur', ()=>{ tasks[idx].title = title.textContent.trim(); save(); });
+      title.addEventListener('keydown', (e)=>{
+        if(e.key === 'Enter'){ e.preventDefault(); title.blur(); }
+      });
+
+      const subtasksWrap = document.createElement('div'); subtasksWrap.className='subtasks';
+
+      task.subtasks.forEach((st, sidx) => {
+        const sub = makeSubtaskElement(st, idx, sidx);
+        subtasksWrap.appendChild(sub);
+      });
+
+      // add-subtask input
+      const addWrap = document.createElement('div'); addWrap.style.display='flex'; addWrap.style.gap='8px';
+      const input = document.createElement('input'); input.type='text'; input.placeholder='Add subtask...'; input.style.flex='1'; input.style.padding='8px'; input.style.border='1px solid #e6eef7'; input.style.borderRadius='8px';
+      input.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ addSubtaskFromInput(idx, input.value); input.value=''; }});
+      const addBtn = document.createElement('button'); addBtn.className='btn'; addBtn.textContent='Add'; addBtn.addEventListener('click', ()=>{ addSubtaskFromInput(idx, input.value); input.value=''; });
+      addWrap.appendChild(input); addWrap.appendChild(addBtn);
+
+      const controls = document.createElement('div'); controls.className='controls';
+      const delBtn = document.createElement('button'); delBtn.className='btn'; delBtn.textContent='Delete'; delBtn.addEventListener('click', ()=>{ if(confirm('Delete this task?')){ tasks.splice(idx,1); save(); }});
+      controls.appendChild(delBtn);
+
+      card.appendChild(title);
+      card.appendChild(subtasksWrap);
+      card.appendChild(addWrap);
+      card.appendChild(controls);
+
+      // drag handlers
+      card.addEventListener('dragstart', dragStart);
+      card.addEventListener('dragend', dragEnd);
+
+      // Only toggle expansion when clicking empty card area, not the title or inputs
+      card.addEventListener('click', (e)=>{ if(e.target === card){ card.classList.toggle('expanded'); }});
+
+      return card;
+    }
+
+    function makeSubtaskElement(subtask, tIdx, sIdx){
+      const div = document.createElement('div'); div.className='subtask';
+      const chk = document.createElement('input'); chk.type='checkbox'; chk.checked = !!subtask.done;
+      chk.addEventListener('change', ()=>{ tasks[tIdx].subtasks[sIdx].done = chk.checked; save(); });
+      const text = document.createElement('div'); text.className='text'; text.contentEditable = true; text.textContent = subtask.text || '';
+      text.addEventListener('input', ()=>{ tasks[tIdx].subtasks[sIdx].text = text.textContent; });
+      text.addEventListener('blur', ()=>{ save(); });
+      const rem = document.createElement('button'); rem.className='remove'; rem.textContent='✕'; rem.title='Remove subtask'; rem.addEventListener('click', ()=>{ tasks[tIdx].subtasks.splice(sIdx,1); save(); });
+      div.appendChild(chk); div.appendChild(text); div.appendChild(rem);
+      return div;
+    }
+
+    function addSubtaskFromInput(taskIndex, text){
+      const trimmed = (text||'').trim();
+      if(!trimmed) return;
+      tasks[taskIndex].subtasks.push({text:trimmed, done:false});
+      save();
+    }
+
+    // Render grid: use FLIP animation for positional changes
+    function render(){
+      // capture first positions
+      const before = new Map();
+      grid.querySelectorAll('.card').forEach(el=> before.set(el.dataset.key || el.dataset.index, el.getBoundingClientRect()));
+
+      grid.innerHTML = '';
+
+      // if no tasks show a centered add-first button
+      if(tasks.length === 0){
+        const jumbo = document.createElement('div'); jumbo.className='card add-box'; jumbo.style.minHeight='200px';
+        jumbo.innerHTML = '<div><div style="font-size:20px;margin-bottom:8px;color:var(--muted)">No tasks yet</div><button id="addFirst" class="btn">+ Add your first task</button></div>';
+        grid.appendChild(jumbo);
+        document.getElementById('addFirst').addEventListener('click', ()=>{ tasks.push({title:'New Task', subtasks:[]}); save(); });
+      } else {
+        // create one card per task
+        tasks.forEach((t, i)=>{
+          const card = createCard(t,i);
+          // store a stable key
+          card.dataset.key = 't'+ (t.id || i);
+          grid.appendChild(card);
+        });
+        // show + add-box as a tile (only when there's at least one task)
+        const addTile = document.createElement('div'); addTile.className='card add-box'; addTile.innerHTML = '<div style="font-size:34px;">＋</div>';
+        addTile.addEventListener('click', ()=>{ tasks.push({title:'New Task', subtasks:[]}); save(); });
+        grid.appendChild(addTile);
+      }
+
+      // compute FLIP: animate from before -> after
+      requestAnimationFrame(()=>{
+        grid.querySelectorAll('.card').forEach(el=>{
+          const key = el.dataset.key || el.dataset.index;
+          const prev = before.get(key);
+          if(prev){
+            const after = el.getBoundingClientRect();
+            const dx = prev.left - after.left;
+            const dy = prev.top - after.top;
+            if(dx || dy){
+              el.style.transform = `translate(${dx}px, ${dy}px)`;
+              el.style.transition = 'transform 0s';
+              requestAnimationFrame(()=>{
+                el.style.transition = 'transform .35s cubic-bezier(.2,.8,.2,1)';
+                el.style.transform = '';
+                setTimeout(()=>{ el.style.transition=''; },400);
+              });
+            }
+          }
+        });
+      });
+
+      updateProgress();
+    }
+
+    // Progress calculation based on subtasks
+    function updateProgress(){
+      let total = 0, done = 0;
+      tasks.forEach(t => { t.subtasks.forEach(s => { total++; if(s.done) done++; })});
+      const percent = total ? Math.round((done/total)*100) : 0;
+      progressBar.style.width = percent + '%';
+      progressMeta.textContent = `${done} / ${total} subtasks completed`;
+    }
+
+    // Drag-and-drop reordering (2D grid): swap positions when dropped
+    let dragEl = null;
+    function dragStart(e){
+      dragEl = e.currentTarget;
+      dragEl.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      try{ e.dataTransfer.setData('text/plain', 'drag'); } catch(e){}
+    }
+    function dragEnd(e){
+      if(dragEl) dragEl.classList.remove('dragging');
+      dragEl = null;
+    }
+
+    // Allow drops on grid and cards
+    grid.addEventListener('dragover', (e)=>{
+      e.preventDefault();
+      const afterEl = getDragAfterElement(grid, e.clientX, e.clientY);
+      const dragging = document.querySelector('.dragging');
+      if(!dragging) return;
+      if(afterEl == null){ grid.appendChild(dragging); }
+      else { grid.insertBefore(dragging, afterEl); }
+    });
+
+    grid.addEventListener('drop', (e)=>{
+      e.preventDefault();
+      // build new tasks order based on DOM
+      const newOrder = [];
+      grid.querySelectorAll('.card').forEach((el)=>{
+        if(el.classList.contains('add-box')) return; // skip add tile
+        const title = el.querySelector('.title')?.textContent || '';
+        // find first unused task matching title+id
+        let foundIndex = tasks.findIndex(t=>t.title===title && !newOrder.includes(t));
+        if(foundIndex===-1){
+          foundIndex = tasks.findIndex((t)=> !newOrder.includes(t));
+        }
+        if(foundIndex>=0) newOrder.push(tasks[foundIndex]);
+      });
+      if(newOrder.length === tasks.length) tasks = newOrder;
+      save();
+    });
+
+    // helper to find element after pointer
+    function getDragAfterElement(container, x, y){
+      const elements = [...container.querySelectorAll('.card')].filter(el => !el.classList.contains('dragging'));
+      return elements.reduce((closest, child) =>{
+        const box = child.getBoundingClientRect();
+        const offset = Math.hypot(x - (box.left + box.width/2), y - (box.top + box.height/2));
+        if(closest === null || offset < closest.offset) return {offset, element: child};
+        return closest;
+      }, null)?.element || null;
+    }
+
+    // initialize ids for stability
+    function ensureIds(){ let changed=false; tasks=tasks.map(t=>{ if(!t.id){ t.id = Math.random().toString(36).slice(2,9); changed=true;} if(!Array.isArray(t.subtasks)) t.subtasks=[]; return t }); if(changed) save(); }
+
+    // initial
+    ensureIds(); render();
+
+    // Public actions: add via keyboard shortcut (N)
+    window.addEventListener('keydown', (e)=>{
+      if(e.key.toLowerCase()==='n'){ tasks.push({title:'New Task', subtasks:[]}); save(); }
+    });
+  </script>
+</body>
+</html>
