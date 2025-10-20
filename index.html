@@ -6,7 +6,7 @@
   <title>Today — Grid Tasks</title>
   <style>
     :root{
-      --bg:#fbfcfd; --card:#ffffff; --accent:#0f172a; --muted:#64748b; --ok:#16a34a; --danger:#ef4444;
+      --bg:#fbfcfd; --card:#ffffff; --accent:#0f172a; --muted:#64748b; --ok:#16a34a; --danger:#ef4444; --warn:#f59e0b;
       --gap:18px; --cols:4;
     }
     *{box-sizing:border-box}
@@ -16,7 +16,6 @@
     .header{display:flex; align-items:center; justify-content:space-between; margin-bottom:16px}
     .subtitle{color:var(--muted); font-size:13px}
 
-    /* Grid */
     .grid{
       display:grid;
       grid-template-columns: repeat(var(--cols), 1fr);
@@ -27,7 +26,6 @@
     @media (max-width:700px){:root{--cols:2}}
     @media (max-width:420px){:root{--cols:1}}
 
-    /* Card */
     .card{
       min-height:120px;
       background:var(--card);
@@ -41,36 +39,31 @@
     }
     .card.dragging{opacity:0.85; transform:scale(.995); box-shadow:0 18px 40px rgba(2,6,23,0.12)}
 
-    .card .title{font-weight:600; font-size:15px}
-    .card .subtasks{flex:1; display:flex; flex-direction:column; gap:6px; margin-top:4px}
+    .title{font-weight:600; font-size:15px}
+    .due-section{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted);}
+    .due-section input[type="date"]{border:1px solid #e2e8f0; border-radius:6px; padding:4px 6px; font-size:13px;}
+    .due-remaining{font-weight:500;}
+    .due-remaining.ok{color:var(--ok);}
+    .due-remaining.warn{color:var(--warn);}
+    .due-remaining.danger{color:var(--danger);}
+
+    .subtasks{flex:1; display:flex; flex-direction:column; gap:6px; margin-top:4px}
     .subtask{display:flex; align-items:center; gap:8px; font-size:14px}
     .subtask input[type='checkbox']{accent-color:var(--ok); width:16px; height:16px}
     .subtask .text{flex:1; outline:none}
-    .subtask .text[contenteditable]{padding:2px 4px; border-radius:6px}
 
-    .subtask .remove{background:transparent;border:0;color:var(--muted); cursor:pointer}
-
-    .card .controls{display:flex; gap:8px; justify-content:flex-end}
+    .remove{background:transparent;border:0;color:var(--muted); cursor:pointer}
+    .controls{display:flex; gap:8px; justify-content:flex-end}
     .btn{background:transparent;border:0;padding:6px 8px;border-radius:8px;cursor:pointer;color:var(--muted); font-size:13px}
     .btn:hover{background:#f1f5f9}
-
-    /* add box */
     .add-box{display:flex;align-items:center;justify-content:center;border:2px dashed rgba(2,6,23,0.06); color:var(--muted); font-size:28px; height:150px}
     .add-box:hover{border-color:rgba(2,6,23,0.12); color:var(--accent)}
-
-    /* small helpers */
     .small{font-size:13px;color:var(--muted)}
-
-    /* footer progress centered */
     .footer{position:fixed; left:50%; transform:translateX(-50%); bottom:22px; width:min(720px,94%);}
     .progress-wrap{background:#eef2f7;border-radius:999px;padding:6px 8px; box-shadow:0 8px 20px rgba(2,6,23,0.05)}
     .progress-inner{height:12px;background:#e6eefb;border-radius:999px; overflow:hidden}
     .progress-bar{height:100%; width:0%; background:linear-gradient(90deg,var(--accent), #475569); transition:width .4s ease}
     .progress-meta{display:flex;justify-content:center;margin-top:8px;font-size:13px;color:var(--muted)}
-
-    /* animations (FLIP helpers) */
-    .flip-fade{transition: transform .32s cubic-bezier(.2,.8,.2,1), opacity .24s ease}
-    .ghost{opacity:.3}
   </style>
 </head>
 <body>
@@ -94,14 +87,56 @@
   </div>
 
   <script>
-    const STORAGE_KEY = 'todayGridTasks_v1';
+    const STORAGE_KEY = 'todayGridTasks_v2';
     const grid = document.getElementById('grid');
     const progressBar = document.getElementById('progressBar');
     const progressMeta = document.getElementById('progressMeta');
-
     let tasks = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
 
     function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks)); render(); }
+
+    function daysRemaining(due){
+      if(!due) return null;
+      const today = new Date();
+      const d = new Date(due);
+      const diff = Math.floor((d - today) / (1000*60*60*24));
+      return diff;
+    }
+
+    function createDueSection(task, idx){
+      const section = document.createElement('div');
+      section.className = 'due-section';
+      const label = document.createElement('label');
+      label.textContent = 'Due date:';
+      const input = document.createElement('input');
+      input.type = 'date';
+      input.value = task.dueDate || '';
+      const remaining = document.createElement('span');
+      remaining.className = 'due-remaining';
+
+      function updateRemaining(){
+        const days = daysRemaining(input.value);
+        remaining.className = 'due-remaining';
+        if(days == null){ remaining.textContent = 'No due date'; }
+        else if(days > 0){ remaining.textContent = `${days} day${days===1?'':'s'} left`; remaining.classList.add('ok'); }
+        else if(days === 0){ remaining.textContent = 'Due today!'; remaining.classList.add('warn'); }
+        else { remaining.textContent = `Overdue by ${Math.abs(days)} day${Math.abs(days)===1?'':'s'}`; remaining.classList.add('danger'); }
+      }
+
+      input.addEventListener('change', ()=>{
+        tasks[idx].dueDate = input.value;
+        save();
+      });
+
+      section.appendChild(label);
+      section.appendChild(input);
+      section.appendChild(remaining);
+      updateRemaining();
+
+      // Update daily when re-rendered
+      section.dataset.update = updateRemaining;
+      return section;
+    }
 
     function createCard(task, idx){
       const card = document.createElement('div');
@@ -109,20 +144,18 @@
       card.dataset.index = idx;
       card.setAttribute('draggable', true);
 
-      const title = document.createElement('div'); title.className='title'; title.textContent = task.title || 'Untitled';
+      const title = document.createElement('div');
+      title.className='title';
+      title.textContent = task.title || 'Untitled';
       title.contentEditable = true;
-
       title.addEventListener('blur', ()=>{ tasks[idx].title = title.textContent.trim(); save(); });
-      title.addEventListener('keydown', (e)=>{
-        if(e.key === 'Enter'){ e.preventDefault(); title.blur(); }
-      });
+      title.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); title.blur(); }});
 
-      const subtasksWrap = document.createElement('div'); subtasksWrap.className='subtasks';
+      const dueSection = createDueSection(task, idx);
 
-      task.subtasks.forEach((st, sidx) => {
-        const sub = makeSubtaskElement(st, idx, sidx);
-        subtasksWrap.appendChild(sub);
-      });
+      const subtasksWrap = document.createElement('div');
+      subtasksWrap.className='subtasks';
+      task.subtasks.forEach((st, sidx) => subtasksWrap.appendChild(makeSubtaskElement(st, idx, sidx)));
 
       const addWrap = document.createElement('div'); addWrap.style.display='flex'; addWrap.style.gap='8px';
       const input = document.createElement('input'); input.type='text'; input.placeholder='Add subtask...'; input.style.flex='1'; input.style.padding='8px'; input.style.border='1px solid #e6eef7'; input.style.borderRadius='8px';
@@ -130,20 +163,17 @@
       const addBtn = document.createElement('button'); addBtn.className='btn'; addBtn.textContent='Add'; addBtn.addEventListener('click', ()=>{ addSubtaskFromInput(idx, input.value); input.value=''; });
       addWrap.appendChild(input); addWrap.appendChild(addBtn);
 
-      const controls = document.createElement('div'); controls.className='controls';
-      const delBtn = document.createElement('button'); delBtn.className='btn'; delBtn.textContent='Delete'; delBtn.addEventListener('click', ()=>{ if(confirm('Delete this task?')){ tasks.splice(idx,1); save(); }});
+      const controls = document.createElement('div');
+      controls.className='controls';
+      const delBtn = document.createElement('button');
+      delBtn.className='btn';
+      delBtn.textContent='Delete';
+      delBtn.addEventListener('click', ()=>{ if(confirm('Delete this task?')){ tasks.splice(idx,1); save(); }});
       controls.appendChild(delBtn);
 
-      card.appendChild(title);
-      card.appendChild(subtasksWrap);
-      card.appendChild(addWrap);
-      card.appendChild(controls);
-
+      card.append(title, dueSection, subtasksWrap, addWrap, controls);
       card.addEventListener('dragstart', dragStart);
       card.addEventListener('dragend', dragEnd);
-
-      card.addEventListener('click', (e)=>{ if(e.target === card){ card.classList.toggle('expanded'); }});
-
       return card;
     }
 
@@ -155,7 +185,7 @@
       text.addEventListener('input', ()=>{ tasks[tIdx].subtasks[sIdx].text = text.textContent; });
       text.addEventListener('blur', ()=>{ save(); });
       const rem = document.createElement('button'); rem.className='remove'; rem.textContent='✕'; rem.title='Remove subtask'; rem.addEventListener('click', ()=>{ tasks[tIdx].subtasks.splice(sIdx,1); save(); });
-      div.appendChild(chk); div.appendChild(text); div.appendChild(rem);
+      div.append(chk, text, rem);
       return div;
     }
 
@@ -167,72 +197,38 @@
     }
 
     function render(){
-      const before = new Map();
-      grid.querySelectorAll('.card').forEach(el=> before.set(el.dataset.key || el.dataset.index, el.getBoundingClientRect()));
-
       grid.innerHTML = '';
-
       if(tasks.length === 0){
         const jumbo = document.createElement('div'); jumbo.className='card add-box'; jumbo.style.minHeight='200px';
         jumbo.innerHTML = '<div><div style="font-size:20px;margin-bottom:8px;color:var(--muted)">No tasks yet</div><button id="addFirst" class="btn">+ Add your first task</button></div>';
         grid.appendChild(jumbo);
-        document.getElementById('addFirst').addEventListener('click', ()=>{ tasks.push({title:'New Task', subtasks:[]}); save(); });
+        document.getElementById('addFirst').addEventListener('click', ()=>{ tasks.push({title:'New Task', subtasks:[], dueDate:null}); save(); });
       } else {
         tasks.forEach((t, i)=>{
+          if(!t.subtasks) t.subtasks = [];
           const card = createCard(t,i);
-          card.dataset.key = 't'+ (t.id || i);
           grid.appendChild(card);
         });
         const addTile = document.createElement('div'); addTile.className='card add-box'; addTile.innerHTML = '<div style="font-size:34px;">＋</div>';
-        addTile.addEventListener('click', ()=>{ tasks.push({title:'New Task', subtasks:[]}); save(); });
+        addTile.addEventListener('click', ()=>{ tasks.push({title:'New Task', subtasks:[], dueDate:null}); save(); });
         grid.appendChild(addTile);
       }
-
-      requestAnimationFrame(()=>{
-        grid.querySelectorAll('.card').forEach(el=>{
-          const key = el.dataset.key || el.dataset.index;
-          const prev = before.get(key);
-          if(prev){
-            const after = el.getBoundingClientRect();
-            const dx = prev.left - after.left;
-            const dy = prev.top - after.top;
-            if(dx || dy){
-              el.style.transform = `translate(${dx}px, ${dy}px)`;
-              el.style.transition = 'transform 0s';
-              requestAnimationFrame(()=>{
-                el.style.transition = 'transform .35s cubic-bezier(.2,.8,.2,1)';
-                el.style.transform = '';
-                setTimeout(()=>{ el.style.transition=''; },400);
-              });
-            }
-          }
-        });
-      });
-
       updateProgress();
     }
 
     function updateProgress(){
       let total = 0, done = 0;
-      tasks.forEach(t => { t.subtasks.forEach(s => { total++; if(s.done) done++; })});
+      tasks.forEach(t => t.subtasks.forEach(s => { total++; if(s.done) done++; }));
       const percent = total ? Math.round((done/total)*100) : 0;
       progressBar.style.width = percent + '%';
       progressMeta.textContent = `${done} / ${total} subtasks completed`;
     }
 
     let dragEl = null;
-    function dragStart(e){
-      dragEl = e.currentTarget;
-      dragEl.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'move';
-      try{ e.dataTransfer.setData('text/plain', 'drag'); } catch(e){}
-    }
-    function dragEnd(e){
-      if(dragEl) dragEl.classList.remove('dragging');
-      dragEl = null;
-    }
+    function dragStart(e){ dragEl = e.currentTarget; dragEl.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; try{e.dataTransfer.setData('text/plain','drag');}catch(e){} }
+    function dragEnd(){ if(dragEl) dragEl.classList.remove('dragging'); dragEl=null; }
 
-    grid.addEventListener('dragover', (e)=>{
+    grid.addEventListener('dragover', e=>{
       e.preventDefault();
       const afterEl = getDragAfterElement(grid, e.clientX, e.clientY);
       const dragging = document.querySelector('.dragging');
@@ -241,14 +237,14 @@
       else { grid.insertBefore(dragging, afterEl); }
     });
 
-    grid.addEventListener('drop', (e)=>{
+    grid.addEventListener('drop', e=>{
       e.preventDefault();
       const newOrder = [];
-      grid.querySelectorAll('.card').forEach((el)=>{
+      grid.querySelectorAll('.card').forEach(el=>{
         if(el.classList.contains('add-box')) return;
         const title = el.querySelector('.title')?.textContent || '';
         let foundIndex = tasks.findIndex(t=>t.title===title && !newOrder.includes(t));
-        if(foundIndex===-1){ foundIndex = tasks.findIndex((t)=> !newOrder.includes(t)); }
+        if(foundIndex===-1){ foundIndex = tasks.findIndex(t=>!newOrder.includes(t)); }
         if(foundIndex>=0) newOrder.push(tasks[foundIndex]);
       });
       if(newOrder.length === tasks.length) tasks = newOrder;
@@ -265,9 +261,7 @@
       }, null)?.element || null;
     }
 
-    function ensureIds(){ let changed=false; tasks=tasks.map(t=>{ if(!t.id){ t.id = Math.random().toString(36).slice(2,9); changed=true;} if(!Array.isArray(t.subtasks)) t.subtasks=[]; return t }); if(changed) save(); }
-
-    ensureIds(); render();
+    render();
   </script>
 </body>
 </html>
